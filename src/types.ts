@@ -1,10 +1,5 @@
-import type { VarhubClient } from "@flinbein/varhub-web-client";
-import type {State as GameState} from "./controllers";
-import type * as RoomMainModule from "./controllers";
-
-export type {GameState};
-export type VarhubGameEvents = {
-	state: [GameState];
-}
-
-export type VarhubGameClient = VarhubClient<typeof RoomMainModule, VarhubGameEvents>
+import type { RPCChannel } from "@flinbein/varhub-web-client";
+import type {State} from "./controllers/index.js";
+import type * as RoomMainModule from "./controllers/index.js";
+export type GameState = Readonly<State>;
+export type GameRPC = RPCChannel<typeof RoomMainModule, {}, GameState>

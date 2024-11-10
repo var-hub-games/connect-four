@@ -1,28 +1,54 @@
-import React, { FC, useEffect, useState } from "react";
+import React, { FC, useCallback, useState } from "react";
 import { Enter } from "./Enter.jsx";
 import { Room } from "./Room.jsx";
-import { VarhubGameClient } from "../types";
+import type { VarhubClient } from "@flinbein/varhub-web-client";
+import useClientState from "../use/useClientState.js";
 
 
 export const App: FC = () => {
-	const [client, setClient] = useState<VarhubGameClient|null>(null);
+	const [client, setClient] = useState<VarhubClient|undefined>();
+	const clientState = useClientState(client);
+	const [roomId, setRoomId] = useState<string>("");
+	const [varhubUrl, setVarhubUrl] = useState<string>("");
 
-	useEffect(() => {
-		// clear connection on close;
-		if (!client) return;
-		const onClose = () => setClient(null);
-		client.on("close", onClose);
-		return () => void client.off("close", onClose);
-	}, [client]);
+	const onCreate = useCallback((client: VarhubClient, roomId: string, varhubUrl: string) => {
+		setClient(client);
+		setRoomId(roomId);
+		setVarhubUrl(varhubUrl);
+		client.on("close", (r) => console.log("-----closed", r));
+		client.on("error", (r) => console.log("-----error", r));
+	}, []);
 
+	const clear = useCallback(() => {
+		history.replaceState({...history.state, join: false}, "");
+		setClient(undefined);
+	}, [])
 
 	if (!client) return (
 		<div>
-			<Enter onCreate={setClient}/>
+			<Enter onCreate={onCreate}/>
+		</div>
+	);
+
+	if (clientState.closed) return (
+		<div>
+			<h1>Closed</h1>
+			<div className="form-line">
+				<input type="button" onClick={clear} value={"restart"} />
+			</div>
+		</div>
+	);
+
+	if (!clientState.ready) return (
+		<div>
+			<h1>Connecting...</h1>
+			<div className="form-line">
+				<input type="button" onClick={clear} value={"cancel"} />
+			</div>
 		</div>
 	);
 
 	return (
-		<Room client={client}  />
+		<Room client={client} roomId={roomId} varhubUrl={varhubUrl}/>
 	)
 }

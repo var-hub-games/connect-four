@@ -53,11 +53,15 @@ input {
 	transition: all .3s ease-out;
 }
 .game-item {
-	color: transparent;
+	color: white;
+	display: grid;
+	text-align: center;
+	font-family: monospace;
+	font-size: 40px;
+	user-select: none;
 }
 .game-item._empty {
 	background-color: #eee;
-	border-color: transparent;
 }
 .game-item._x {
 	background-color: #3030b0;
@@ -109,9 +113,6 @@ input {
 }
 .player-name._empty {
 	color: #fff;
-}
-.player-name._empty:after {
-	content: "...awaiting...";
 }
 .player-name._x {
 	background-color: #c0c0ff;

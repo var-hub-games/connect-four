@@ -1,16 +1,14 @@
-import React, { FC, useCallback, useState, ChangeEventHandler, FormEventHandler, useEffect, useMemo } from "react";
-import { Varhub } from "@flinbein/varhub-web-client";
-import roomIntegrity from "varhub-modules-integrity:../controllers:index.ts";
-import { VarhubGameClient } from "../types";
+import React, { FC, useCallback, useState, FormEventHandler, useEffect } from "react";
+import { Varhub, type VarhubClient } from "@flinbein/varhub-web-client";
+import roomIntegrity from "../controllers?varhub-bundle:integrity" with {type: "css"};
 
-export const Enter: FC<{onCreate: (data: VarhubGameClient) => void}> = (props) => {
-
-	const [abortCtrl, setAbortCtrl] = useState<AbortController|null>(null);
+export const Enter: FC<{onCreate: (data: VarhubClient, roomId: string, url: string) => void}> = (props) => {
+	const [loading, setLoading] = useState(false);
 
 	const [initValues] = useState(() => {
 		const searchParams = new URLSearchParams(location.search);
 
-		const url = searchParams.get("url") ?? history?.state?.url ?? "";
+		const url = searchParams.get("url") ?? history?.state?.url ?? "https://varhub.dpohvar.ru";
 		const room = searchParams.get("room") ?? history?.state?.room ?? "";
 		const name = history?.state?.name ?? "";
 		const join = history?.state?.join ?? false;
@@ -31,19 +29,17 @@ export const Enter: FC<{onCreate: (data: VarhubGameClient) => void}> = (props) =
 	const [name, setName] = useState(initValues.name);
 
 	const enterRoom = useCallback(async (url: string, room:string, clientName:string) => {
-		const ctrl = new AbortController();
 		try {
-			setAbortCtrl(ctrl);
-			const client = await createRoomAndClient(url, room, clientName, ctrl);
-			window.history.replaceState({url, room: client.roomId, name: clientName, join: true}, "");
-			props.onCreate(client);
+			setLoading(true)
+			const [client, newRoomId] = await createRoomAndClient(url, room, clientName);
+			window.history.replaceState({url, room: newRoomId, name: clientName, join: true}, "");
+			props.onCreate(client, newRoomId, url);
 		} catch (e) {
 			console.error(e);
-			alert(e.message);
 		} finally {
-			setAbortCtrl(null);
+			setLoading(false)
 		}
-	}, []);
+	}, [room]);
 
 	useEffect(() => {
 		console.log("INIT-VALUES", initValues);
@@ -55,7 +51,7 @@ export const Enter: FC<{onCreate: (data: VarhubGameClient) => void}> = (props) =
 	const onSubmit = useCallback<FormEventHandler<HTMLFormElement>>((event) => {
 		event.preventDefault();
 		const inputs = event.currentTarget.elements;
-		const action = event.nativeEvent?.["submitter"]?.name ?? "join" as string;
+		const action = (event as any).nativeEvent?.["submitter"]?.name ?? "join" as string;
 		const url = (inputs.namedItem("url") as HTMLInputElement).value;
 		const room = action === "join" ? (inputs.namedItem("room") as HTMLInputElement).value : "";
 		const name = (inputs.namedItem("name") as HTMLInputElement).value;
@@ -67,43 +63,42 @@ export const Enter: FC<{onCreate: (data: VarhubGameClient) => void}> = (props) =
 		if (url && name) void enterRoom(url, room, name);
 	}, [url, name])
 
-	const cancel = useCallback(() => {
-		if (!abortCtrl) return;
-		abortCtrl.abort("cancelled");
-		setAbortCtrl(null);
-	}, [abortCtrl]);
-
 	return (
 		<form onSubmit={onSubmit}>
 			<div>
-				<input autoFocus={initValues.autofocusField==="url"} disabled={!!abortCtrl} name="url" type="text" placeholder="https://server-address" value={url} onChange={(e) => setUrl(e.target.value)} required/>
+				<input autoFocus={initValues.autofocusField==="url"} disabled={loading} name="url" type="text" placeholder="https://server-address" value={url} onChange={(e) => setUrl(e.target.value)} required/>
 			</div>
 			<div>
-				<input autoFocus={initValues.autofocusField==="room"} disabled={!!abortCtrl} name="room" type="text" placeholder="room (create new if empty)" value={room} onChange={(e) => setRoom(e.target.value)}/>
+				<input autoFocus={initValues.autofocusField==="room"} disabled={loading} name="room" type="text" placeholder="room (create new if empty)" value={room} onChange={(e) => setRoom(e.target.value)}/>
 			</div>
 			<div>
-				<input autoFocus={initValues.autofocusField==="name"} disabled={!!abortCtrl} name="name" type="text" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required/>
+				<input autoFocus={initValues.autofocusField==="name"} disabled={loading} name="name" type="text" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required/>
 			</div>
 			<div className="form-line">
-				<input disabled={!!(abortCtrl || !room)} type="submit" name="join" value="join" />
-				<input disabled={!!(abortCtrl)} type="submit" name="create" value="create new" />
-				<input onClick={cancel} disabled={!abortCtrl} type="button" value="cancel"/>
+				<input disabled={(loading || !room)} type="submit" name="join" value="join" />
+				<input disabled={loading} type="submit" name="create" value="create new" />
 			</div>
-			{!abortCtrl && <SearchRooms selectRoom={selectRoom} url={url} key={url}/>}
+			{!loading && <SearchRooms selectRoom={selectRoom} url={url} key={url}/>}
 		</form>
 	);
 }
 
-async function createRoomAndClient(url: string, roomId: string, name: string, ctrl: AbortController){
+async function createRoomAndClient(url: string, roomId: string, name: string){
 	const hub = new Varhub(url);
 	if (!roomId) {
-		const { roomModule, roomIntegrity} = await import("varhub-modules:../controllers:index.ts");
-		const roomData = await hub.createRoom(roomModule, {integrity: roomIntegrity});
+		const roomCreateOptions = await import("../controllers?varhub-bundle");
+		const roomData = await hub.createRoom("ivm", {
+			...roomCreateOptions,
+			message: `${name}`
+		});
 		roomId = roomData.id;
 		console.log("ROOM CREATED", roomData);
 	}
 	console.log("JOIN ROOM", roomId, name, roomIntegrity);
-	return await hub.join(roomId, name, {integrity: roomIntegrity, timeout: ctrl.signal}) as any as VarhubGameClient;
+	return [
+		hub.join(roomId, {integrity: roomIntegrity, params: [name]}),
+		roomId
+	] as const;
 }
 
 const SearchRooms: FC<{selectRoom: (value: string) => void, url: string}> = ({selectRoom, url}) => {
@@ -128,13 +123,13 @@ const SearchRooms: FC<{selectRoom: (value: string) => void, url: string}> = ({se
 			<div className="form-line">
 				<input type="button" onClick={search} disabled={loading} value={`Search rooms ${roomIntegrity.substring(0, 8)}`}/>
 			</div>
-			{Object.keys(roomMap).map(key => (
+			{Object.entries(roomMap).map(([key, message]) => (
 				<input
 					key={key}
 					title={roomMap[key]}
 					type="button"
 					onClick={() => selectRoom(key)} disabled={loading}
-					value={key}
+					value={`${key}: ${message}`}
 				/>
 			))}
 		</>

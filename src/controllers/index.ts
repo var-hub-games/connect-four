@@ -1,154 +1,71 @@
-import room from "varhub:room";
+import RPC from "varhub:rpc";
+import room, {type Connection} from "varhub:room";
+import Players from "varhub:players"
 
-room.on("offline", room.kick);
-room.on("leave", (player) => {
-	let playerLeavedGame = false;
-	if (player === state.playerO) {
-		playerLeavedGame = true;
-		state.playerO = null;
-	}
-	if (player === state.playerX) {
-		playerLeavedGame = true;
-		state.playerX = null;
-	}
-	if (playerLeavedGame) {
-		state.data = [];
-		state.win = null;
-		state.turn = null;
-		updateState();
-	}
-});
+const players = new Players<{team: "x"|"o"}>(room, (_c, name) => name ? String(name) : undefined);
 
-export interface State {
-	win: string | null;
-	playerX: string | null;
-	playerO: string | null;
+export type FieldState = {
 	height: number;
 	data: ("x"|"o"|"X"|"O")[][];
+};
+
+const field = new RPC({}, {height: 0, data: []} as FieldState)
+
+export interface State {
+	win: "x" | "o" | null;
+	x: string | null;
+	o: string | null;
 	turn: string | null;
 }
-const state: State = {
+
+RPC.default.setState({
 	win: null,
-	playerX: null,
-	playerO: null,
-	height: 0,
-	data: [],
+	x: null,
+	o: null,
 	turn: null,
-}
-updateState();
+} satisfies State);
 
-function updateState(){
-	room.message = JSON.stringify({
-		playerX: state.playerX, playerO: state.playerO, height: state.height, width: state.data.length
-	});
-	room.broadcast("state", state);
-}
-export function getState(this: {player: string}){
-	return state;
+function updateState(data: Partial<State>){
+	const state = {...RPC.default.state, ...data};
+	RPC.default.setState(state);
 }
 
+function resetGame(){
+	for (let player of players) player.setTeam(undefined);
+	updateState({x: null, o: null, turn: null, win: null});
+	field.setState({height: 0, data: []});
+}
 
-function getPlayerTeam(player: string): "x" | "o" {
-	if (player === state.playerX) return "x";
-	if (player === state.playerO) return "o";
+// players
+
+players.on("offline", player => player.kick());
+players.on("leave", player => {
+	if (player.team) resetGame();
+})
+
+function getOppositeTeam(team: "x"| "o" | null){
+	if (team === "x") return "o";
+	if (team === "o") return "x";
 	return null;
-}
-
-function checkPlayerTurn(player: string): void {
-	if (player !== state.playerX && player !== state.playerO) {
-		throw new Error("you are not a player");
-	}
-	if (state.turn && state.turn !== player) {
-		throw new Error("not your turn");
-	}
-}
-
-function getOppositePlayer(player: string): string | null {
-	if (player === state.playerX) return state.playerO;
-	if (player === state.playerO) return state.playerX;
-	return null;
-}
-
-export function joinTeam(this: {player: string}, team: "x"|"o"): boolean {
-	if (state.turn !== null) throw new Error("wrong state");
-	if (!team) {
-		if (state.playerX === this.player) {
-			state.playerX = null;
-			updateState();
-			return true;
-		} else if (state.playerO === this.player) {
-			state.playerO = null;
-			updateState();
-			return true;
-		}
-		return false;
-	}
-	if (team === "x" && state.playerX === null) {
-		state.playerX = this.player;
-		if (state.playerO === this.player) state.playerO = null;
-		updateState();
-		return true;
-	}
-	if (team === "o" && state.playerO === null) {
-		state.playerO = this.player;
-		if (state.playerX === this.player) state.playerX = null;
-		updateState();
-		return true;
-	}
-	return false;
-}
-
-export function start(this: {player: string}, rows: number = state.data.length, height: number = state.height){
-	checkPlayerTurn(this.player);
-	if (state.turn !== null) throw new Error("wrong state");
-	if (state.playerO == null || state.playerX == null) throw new Error("no players");
-	if (!Number.isInteger(rows)) throw new Error("rows format");
-	if (!Number.isInteger(height)) throw new Error("height format");
-	rows = Number(rows);
-	if (rows < 4 || rows > 20) throw new Error("rows format");
-	if (height < 4 || height > 20) throw new Error("height format");
-
-	state.height = height;
-	state.turn = null;
-	state.win = null;
-	state.data = Array.from({length: rows}).map(() => [])
-	updateState();
-}
-
-export function move(this: {player: string}, colNumber: number){
-	checkPlayerTurn(this.player);
-	const oppositePlayer = getOppositePlayer(this.player);
-	if (!oppositePlayer) throw new Error("game not ready");
-	colNumber = Number(colNumber);
-
-	if (!Number.isInteger(colNumber)) throw new Error("wrong colNumber");
-	if (colNumber < 0 || colNumber >= state.data.length) throw new Error("colNumber out of bounds");
-	const col = state.data[colNumber];
-	if (col.length >= state.height) throw new Error("height out");
-	const playerTeam = getPlayerTeam(this.player)
-	col.push(playerTeam);
-	const hasTurns = state.data.some(({length}) => length < state.height);
-	state.turn = hasTurns ? getOppositePlayer(this.player) : null;
-	checkWin(colNumber, col.length - 1, playerTeam);
-	updateState();
-	return true;
 }
 
 const directions: [number, number][] = [[0, 1], [1, 1], [1, 0], [1, -1]]
 function checkWin(colNumber: number, rowNumber: number, team: "x"|"o"){
-	const winPoints = checkWinPoints(state.data, colNumber, rowNumber, team, 4);
-	if (!winPoints) return;
-	const winType = ({x: "X", o: "O"} as const)[team]
-	for (const [row, col] of winPoints) state.data[row][col] = winType;
-	state.win = team === "x" ? state.playerX : state.playerO;
-	state.turn = null;
+	const winPoints = checkWinPoints(field.state.data, colNumber, rowNumber, team, 4);
+	if (!winPoints) return false;
+	const winType = ({x: "X", o: "O"} as const)[team];
+	const dataCopy = field.state.data.map(row => [...row])
+	for (const [row, col] of winPoints) dataCopy[row][col] = winType;
+	field.setState(state => ({...state, data: dataCopy}));
+	updateState({win: team, turn: null});
+	return true;
 }
 
 function checkWinPoints(map: ("x"|"o"|"X"|"O")[][], colNumber: number, rowNumber: number, team: "x"|"o", winLength: number): null | [number, number][]{
 	const totalWinPoints: [number, number][] = [];
 	for (const dir of directions) {
-		const winPoints = [];
-		let point = [colNumber, rowNumber];
+		const winPoints: [number, number][] = [];
+		let point: [number, number] = [colNumber, rowNumber];
 		while (true) {
 			const value = map[point[0]]?.[point[1]];
 			if (value !== team) break;
@@ -167,3 +84,61 @@ function checkWinPoints(map: ("x"|"o"|"X"|"O")[][], colNumber: number, rowNumber
 	if (totalWinPoints.length === 0) return null;
 	return totalWinPoints;
 }
+
+// exports
+
+export function joinTeam(this: Connection, team: "x" | "o") {
+	const player = players.get(this);
+	if (!player) throw new Error("wrong state");
+	if (team !== "x" && team !== "o") throw new Error("wrong team");
+	if (players.getTeam(team).size) throw new Error("team is taken");
+	player.setTeam(team);
+	updateState({
+		x: [...players.getTeam("x")][0]?.name ?? null,
+		o: [...players.getTeam("o")][0]?.name ?? null,
+		win: null,
+		turn: null
+	});
+}
+
+export function start(this: Connection, rows: number = field.state.data.length, height: number = field.state.height) {
+	const player = players.get(this);
+	if (!player?.team) throw new Error("wrong group");
+	if (RPC.default.state.turn !== null) throw new Error("wrong state");
+	if (RPC.default.state.x == null || RPC.default.state.o == null) throw new Error("no players");
+
+	if (!Number.isInteger(rows)) throw new Error("rows format");
+	if (!Number.isInteger(height)) throw new Error("height format");
+	if (rows < 4 || rows > 20) throw new Error("rows format");
+	if (height < 4 || height > 20) throw new Error("height format");
+
+	field.setState({
+		height,
+		data: Array.from({length: rows}).map(() => [])
+	});
+	updateState({win: null});
+}
+
+export function move(this: Connection, colNumber: number){
+	const player = players.get(this);
+	if (!player?.team) throw new Error("wrong group");
+	const team = player.team;
+	if (RPC.default.state.turn && player.team !== RPC.default.state.turn) throw new Error("wrong group");
+	if (RPC.default.state.win) throw new Error("wrong group");
+
+	if (!Number.isInteger(colNumber)) throw new Error("wrong colNumber");
+	if (colNumber < 0 || colNumber >= field.state.data.length) throw new Error("colNumber out of bounds");
+
+	const col = field.state.data[colNumber];
+	if (col.length >= field.state.height) throw new Error("height out");
+	field.setState(state => ({
+		...state,
+		data: state.data.map((row, i) => i === colNumber ? [...row, team] : row)
+	}));
+	const hasTurns = field.state.data.some(({length}) => length < field.state.height);
+	const hasWinner = checkWin(colNumber, col.length - 1, team);
+	if (!hasWinner) updateState({turn: hasTurns ? getOppositeTeam(team) : null})
+	return true;
+}
+
+export const Field = () => field;

@@ -1,45 +1,40 @@
 import React, { FC, useCallback, useState, FormEventHandler, useEffect, useMemo } from "react";
-import { VarhubGameClient, GameState } from "../types";
-import { joinTeam } from "../controllers";
-import { QrCodeCanvas } from "./QrCodeCanvas";
+import { GameRPC, GameState } from "../types.js";
+import { QrCodeCanvas } from "./QrCodeCanvas.js";
+import { RPCChannel, VarhubClient } from "@flinbein/varhub-web-client";
+import useRPCState from "../use/useRPCState.js";
+import useRPC from "../use/useRPC.js";
 
-interface Props {}
-
-export interface RoomConnection {
-	client: VarhubGameClient
+export interface RoomProps {
+	client: VarhubClient,
+	roomId: string,
+	varhubUrl: string,
 }
 
-export const Room: FC<RoomConnection> = ({client}) => {
+export const Room: FC<RoomProps> = ({client, roomId, varhubUrl}) => {
 
-	const [gameState, setGameState] = useState<GameState|null>(null);
+	const rpc: GameRPC = useMemo(() => new RPCChannel(client) as any, [client]);
+	const gameState: GameState = useRPCState(rpc);
 
 	const leave = useCallback(() => {
 		history.replaceState({...history.state, join: false}, "");
 		void client.close("leave");
 	}, []);
 
-	useEffect(() => {
-
-		client.methods.getState().then(setGameState as any)
-
-		client.messages.on("state", setGameState as any)
-		return () => client.messages.off("state", setGameState as any);
-	}, [client]);
-
-	const inviteUrl = useMemo<string|null>(() => {
+	const inviteUrl = useMemo<string>(() => {
 		const resultUrl = new URL(location.href);
-		resultUrl.searchParams.set("url", client.hub.url);
-		resultUrl.searchParams.set("room", client.roomId);
+		resultUrl.searchParams.set("url", varhubUrl);
+		resultUrl.searchParams.set("room", roomId);
 		return resultUrl.href;
 	}, [client]);
 
 	const share = useCallback(() => {
-		void navigator.share({url: inviteUrl, title: "Join game", text: `Room id: ${client.roomId}`});
+		void navigator.share({url: inviteUrl, title: "Join game", text: `Room id: ${"client.roomId"}`});
 	}, [inviteUrl, client])
 
 	return (
 		<div>
-			{gameState && <RoomGame client={client} gameState={gameState} />}
+			{gameState && <RoomGame rpc={rpc} gameState={gameState} />}
 			<div className="form-line">
 				<input type="button" value="LEAVE" onClick={leave}/>
 			</div>
@@ -48,44 +43,66 @@ export const Room: FC<RoomConnection> = ({client}) => {
 	)
 }
 
-const RoomGame: FC<{client: VarhubGameClient, gameState: GameState}> = ({client, gameState}) => {
+const RoomGame: FC<{rpc: GameRPC, gameState: GameState}> = ({rpc, gameState}) => {
 	const [loading, setLoading] = useState(false);
-	const canTurn = !gameState.turn || gameState.turn === client.name;
+	const [team, setTeam] = useState<"x"|"o"|null>(null);
 
-	const move = useCallback(async (index: number) => {
-		setLoading(true);
+	const join = useCallback(async (team: "x"|"o") => {
 		try {
-			await client.methods.move(index);
+			setLoading(true);
+			await rpc.joinTeam(team);
+			setTeam(team);
 		} finally {
 			setLoading(false);
 		}
-	}, []);
+	}, [team])
+
+	const canTurn = team && !gameState.win && !gameState.turn || gameState.turn === team;
 
 	return (
 		<>
 			<div className="flex-sb">
-				<div className={"player-name _x "+(gameState.playerX===null ? "_empty": "")}>{gameState.playerX}</div>
+				{gameState.x==null ? (
+					<div className="player-name _x _empty" onClick={() => join("x")}>join X team</div>
+				) : (
+					<div className="player-name _x">{gameState.x}</div>
+				)}
 				<div>VS</div>
-				<div className={"player-name _o "+(gameState.playerO===null ? "_empty": "")}>{gameState.playerO}</div>
+				{gameState.o==null ? (
+					<div className="player-name _o _empty" onClick={() => join("o")}>join O team</div>
+				) : (
+					<div className="player-name _o">{gameState.o}</div>
+				)}
 			</div>
-			<RoomField field={gameState.data} canTurn={!loading && canTurn} height={gameState.height} onMove={move}/>
-			{gameState.win !== null && <div>WINNER: {gameState.win}</div>}
-			<RoomGameControl gameState={gameState} client={client} />
+			<RoomField rpc={rpc} canTurn={!loading && canTurn}/>
+			{gameState.win !== null && <div>WINNER {gameState.win}: {gameState[gameState.win]}</div>}
+			{team && <RoomGameControl gameState={gameState} rpc={rpc} team={team} />}
+
 		</>
 	);
 }
 
 interface RoomFieldProps {
-	field: ("x"|"o"|"X"|"O")[][],
+	rpc: GameRPC,
 	canTurn: boolean,
-	height: number
-	onMove: (index: number) => void
 }
-const RoomField: FC<RoomFieldProps> = ({field, canTurn, height, onMove}) => {
+const RoomField: FC<RoomFieldProps> = ({rpc, canTurn}) => {
+	const [_ignored, fieldState] = useRPC(() => new rpc.Field(), [rpc]);
+	const [loading, setLoading] = useState(false);
+
+	const move = useCallback(async (index: number) => {
+		setLoading(true);
+		try {
+			await rpc.move(index);
+		} finally {
+			setLoading(false);
+		}
+	}, [rpc]);
+
 	return (
 		<div className="game-field">
-			{field.map((row, index) => (
-				<RoomRow key={index} index={index} row={row} onMove={onMove} canTurn={canTurn} height={height}/>
+			{fieldState?.data.map((row, index) => (
+				<RoomRow key={index} index={index} row={row} onMove={move} canTurn={canTurn && !loading} height={fieldState?.height ?? 0}/>
 			))}
 		</div>
 	)
@@ -113,17 +130,14 @@ const RoomRow: FC<RoomRowProps> = ({row, index, canTurn, height, onMove}) => {
 				</div>
 			))}
 			{Array.from({length: height-row.length}).map((_, index) => (
-				<div key={index} className="game-item _empty">
-					#
-				</div>
+				<div key={index} className="game-item _empty"></div>
 			))}
 		</div>
 	)
 }
 
-const RoomGameControl: FC<{client: VarhubGameClient, gameState: GameState}> = ({client, gameState}) => {
+const RoomGameControl: FC<{rpc: GameRPC, gameState: GameState, team: "x"|"o"}> = ({rpc, gameState, team}) => {
 	const [loading, setLoading] = useState(false);
-	const canPlay = gameState.playerO === client.name || gameState.playerX === client.name;
 
 	const onSubmit = useCallback<FormEventHandler<HTMLFormElement>>(async (event) => {
 		event.preventDefault();
@@ -134,7 +148,7 @@ const RoomGameControl: FC<{client: VarhubGameClient, gameState: GameState}> = ({
 			const heightStr = (inputs.namedItem("height") as HTMLInputElement).value || "7";
 			const width = Number(widthStr);
 			const height = Number(heightStr);
-			await client.methods.start(width, height);
+			await rpc.start(width, height);
 		} finally {
 			setLoading(false);
 		}
@@ -143,7 +157,7 @@ const RoomGameControl: FC<{client: VarhubGameClient, gameState: GameState}> = ({
 	const joinTeam = useCallback(async (team: "x" | "o") => {
 		try {
 			setLoading(true);
-			await client.methods.joinTeam(team);
+			await rpc.joinTeam(team);
 		} finally {
 			setLoading(false);
 		}
@@ -152,14 +166,7 @@ const RoomGameControl: FC<{client: VarhubGameClient, gameState: GameState}> = ({
 
 	return (
 		<>
-			{(gameState.playerO == null || gameState.playerX == null || canPlay) && (
-				<div className="form-line">
-					<input type="button" onClick={() => joinTeam("x")} disabled={loading || gameState.playerX != null} value="play X" />
-					<input type="button" onClick={() => joinTeam("o")} disabled={loading || gameState.playerO != null} value="play O" />
-					<input type="button" onClick={() => joinTeam(null)} disabled={!canPlay} value="spectate" />
-				</div>
-			)}
-			{(gameState.playerO != null && gameState.playerX != null && !gameState.turn && canPlay) && (
+			{(gameState.x != null && gameState.o != null && !gameState.turn) && (
 				<form onSubmit={onSubmit}>
 					<div className="form-line">
 						<input name="width" type="number" min={4} max={20} placeholder="width = 11" disabled={loading}/>
