@@ -27,6 +27,14 @@ export const App: FC = () => {
 	if (!client) return (
 		<div>
 			<Enter onCreate={onCreate}/>
+			<div style={{display: "flex"}}>
+				{"CONNECT-FOUR".split("").map((c, i) => {
+					const classList = ["_x", "_o", "_X", "_O"];
+					const rndClass = classList[Math.floor(Math.random() * classList.length)];
+					return <div key={i} className={"game-item "+rndClass}>{c}</div>
+				})}
+			</div>
+
 		</div>
 	);
 
