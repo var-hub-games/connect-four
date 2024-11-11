@@ -129,14 +129,13 @@ export function move(this: Connection, colNumber: number){
 	if (!Number.isInteger(colNumber)) throw new Error("wrong colNumber");
 	if (colNumber < 0 || colNumber >= field.state.data.length) throw new Error("colNumber out of bounds");
 
-	const col = field.state.data[colNumber];
-	if (col.length >= field.state.height) throw new Error("height out");
+	if (field.state.data[colNumber].length >= field.state.height) throw new Error("height out");
 	field.setState(state => ({
 		...state,
 		data: state.data.map((row, i) => i === colNumber ? [...row, team] : row)
 	}));
 	const hasTurns = field.state.data.some(({length}) => length < field.state.height);
-	const hasWinner = checkWin(colNumber, col.length - 1, team);
+	const hasWinner = checkWin(colNumber, field.state.data[colNumber].length - 1, team);
 	if (!hasWinner) updateState({turn: hasTurns ? getOppositeTeam(team) : null})
 	return true;
 }
