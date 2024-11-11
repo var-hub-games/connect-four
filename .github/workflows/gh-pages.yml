@@ -22,8 +22,8 @@ jobs:
       - name: Build (npm)
         run: npm run build
 
-      - name: Log dist
-        run: ls ./dist
+      - name: Log ls
+        run: ls
 
       - name: Deploy GH-Pages
         uses: peaceiris/actions-gh-pages@v4
