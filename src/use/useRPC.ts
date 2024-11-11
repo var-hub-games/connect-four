@@ -22,7 +22,6 @@ export default function useRPC<T extends RPCChannel<any, unknown, any> | undefin
 		}
 		if (!newRpc) return;
 		console.log("subscribe on rpc", newRpc);
-		newRpc.on("state", console.warn);
 		newRpc.on("state", setRpcState);
 		newRpc.on("close", () => setClosed(true));
 		return () => {
